@@ -65,7 +65,10 @@ export class MemoryVault {
   _save() {
     try {
       const cells = {};
-      for (const [key, c] of this.cells) cells[key] = c;
+      for (const [key, c] of this.cells) {
+        const { sprite, ...rest } = c;
+        cells[key] = rest;
+      }
       localStorage.setItem(STORE_KEY, JSON.stringify({ v: 1, cells }));
     } catch { /* ignore */ }
   }

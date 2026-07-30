@@ -72,7 +72,7 @@ export class SpaceControls {
     e.preventDefault();
     this.mode = 'anchor';
     const step = (e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY) * 0.0011;
-    this.targetLogDist = THREE.MathUtils.clamp(this.targetLogDist - step, this.minLog, this.maxLog);
+    this.targetLogDist = THREE.MathUtils.clamp(this.targetLogDist + step, this.minLog, this.maxLog);
   };
 
   // 聚焦到任意世界坐标（如记忆晶体），滚轮/双指后恢复锚点巡航

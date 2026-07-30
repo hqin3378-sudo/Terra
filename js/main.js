@@ -254,7 +254,7 @@ function boot(webgl2) {
   addEventListener('pointerup', (e) => {
     state.lensTarget = e.pointerType === 'mouse' && !state.reduced ? 0.16 : 0;
   }, { passive: true });
-  addEventListener('pointerleave', () => { state.lensTarget = 0; }, { passive: true });
+  document.addEventListener('pointerleave', () => { state.lensTarget = 0; }, { passive: true });
 
   /* ---------------- 尺寸与循环 ---------------- */
 
