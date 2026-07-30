@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>TERRA · 银河漫游</title>
+<meta name="description" content="一次可穿越、可触摸、可铭记的数字深空漫游。全部实时生成，无限可探索。">
+<meta name="theme-color" content="#020207">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='3' fill='%23cfe6ff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+
+<div id="loader" aria-hidden="true">
+  <div class="loader-star"></div>
+  <div class="loader-text">TERRA</div>
+  <div class="loader-sub">正在汇聚星尘…</div>
+</div>
+
+<canvas id="scene"></canvas>
+
+<header id="hud-top">
+  <div class="brand">TERRA<span>银河漫游</span></div>
+  <nav class="hud-actions">
+    <button id="btn-cruise" type="button">穿 越</button>
+    <button id="btn-audio" type="button" aria-pressed="false">声 景</button>
+    <button id="btn-motion" type="button" aria-pressed="false">静 谧</button>
+    <button id="btn-log" type="button" aria-pressed="false">日 志</button>
+  </nav>
+</header>
+
+<div id="hint">拖动旋转 · 滚轮 / 双指缩放 · 按住星域产生引力透镜</div>
+
+<section id="scale-panel" aria-live="polite">
+  <div id="scale-label">行星轨道 · —</div>
+  <div id="scale-bar">
+    <div id="scale-cursor"></div>
+  </div>
+  <div id="scale-ticks">
+    <span>表面</span><span>恒星系</span><span>星团</span><span>旋臂</span><span>银河</span><span>深空</span>
+  </div>
+</section>
+
+<aside id="journal" aria-hidden="true">
+  <h3>星际日志</h3>
+  <p class="journal-tip">在星域中停留，记忆将凝结为晶体。</p>
+  <div id="journal-list"></div>
+  <button id="journal-clear" type="button">遗忘所有记忆</button>
+</aside>
+
+<div id="toast" role="status"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
