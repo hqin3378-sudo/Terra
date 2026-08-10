@@ -11,6 +11,9 @@ const SPECTRAL = [
   { type: 'M', color: [1.00, 0.71, 0.42], size: 0.62, w: 0.7517 },
 ];
 
+// 光谱型 → 表面温度（K），供拾取信息卡展示
+const TEMP = { O: 35000, B: 18000, A: 8600, F: 6800, G: 5600, K: 4400, M: 3100 };
+
 // 确定性随机源：每次访问生成同一条银河，记忆晶体才能对齐坐标
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -112,6 +115,7 @@ export function createGalaxy(options = {}) {
   const colors = new Float32Array(count * 3);
   const sizes = new Float32Array(count);
   const seeds = new Float32Array(count);
+  const brightStars = []; // 可拾取的亮星子集
 
   for (let i = 0; i < count; i++) {
     const roll = rng();
@@ -142,7 +146,7 @@ export function createGalaxy(options = {}) {
       dimBase = 0.4;
     }
 
-    let cr, cg, cb, size;
+    let cr, cg, cb, size, spType = null;
     if (roll < 0.83 && rng() < 0.004) {
       // 发射星云斑点：沿旋臂点缀的柔和云气
       cr = 1.0; cg = 0.42; cb = 0.62;
@@ -150,6 +154,7 @@ export function createGalaxy(options = {}) {
       dimBase = 0.16;
     } else {
       const sp = pickSpectral(rng);
+      spType = sp.type;
       const jitter = 0.92 + rng() * 0.16;
       cr = sp.color[0] * jitter;
       cg = sp.color[1] * jitter;
@@ -166,6 +171,16 @@ export function createGalaxy(options = {}) {
     colors[i * 3 + 2] = cb * dimBase;
     sizes[i] = size;
     seeds[i] = rng();
+
+    // 收集可拾取亮星：O/B/A/F 全收 + 其余稀疏采样（不含暗晕星与星云）
+    if (spType && roll < 0.95 && brightStars.length < 3000 && (size >= 1.15 || i % 211 === 0)) {
+      brightStars.push({
+        pos: [x, y, z],
+        type: spType,
+        temp: TEMP[spType],
+        name: `TIC ${1000 + Math.floor(rng() * 9000)}-${String(brightStars.length).padStart(4, '0')}`,
+      });
+    }
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -217,5 +232,5 @@ export function createGalaxy(options = {}) {
   const sunTheta = (26 / radius) * spin;
   const sunPos = new THREE.Vector3(Math.cos(sunTheta) * 26, 0.3, Math.sin(sunTheta) * 26);
 
-  return { points, uniforms, sampleRegionColor, sunPos, radius };
+  return { points, uniforms, sampleRegionColor, sunPos, radius, brightStars };
 }

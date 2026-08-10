@@ -1,0 +1,17 @@
+# IDE & 项目元数据
+.codebuddy/
+.playwright-cli/
+.idea/
+.vscode/
+
+# 依赖
+node_modules/
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志与临时
+*.log
+*.tmp

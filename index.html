@@ -22,34 +22,122 @@
 
 <canvas id="scene"></canvas>
 
-<header id="hud-top">
-  <div class="brand">TERRA<span>银河漫游</span></div>
-  <nav class="hud-actions">
-    <button id="btn-cruise" type="button">穿 越</button>
-    <button id="btn-audio" type="button" aria-pressed="false">声 景</button>
-    <button id="btn-motion" type="button" aria-pressed="false">静 谧</button>
-    <button id="btn-log" type="button" aria-pressed="false">日 志</button>
-  </nav>
-</header>
-
-<div id="hint">拖动旋转 · 滚轮 / 双指缩放 · 按住星域产生引力透镜</div>
-
-<section id="scale-panel" aria-live="polite">
-  <div id="scale-label">行星轨道 · —</div>
-  <div id="scale-bar">
-    <div id="scale-cursor"></div>
-  </div>
-  <div id="scale-ticks">
-    <span>表面</span><span>恒星系</span><span>星团</span><span>旋臂</span><span>银河</span><span>深空</span>
+<!-- 着陆页：背景即是实时渲染的银河全景 -->
+<section class="page active" data-page="home" id="page-home">
+  <div class="home-inner">
+    <div class="home-eyebrow">REAL-TIME GENERATED GALAXY</div>
+    <h1 class="home-title">TERRA</h1>
+    <p class="home-sub">银 河 漫 游</p>
+    <p class="home-desc">一次可穿越、可触摸、可铭记的数字深空。<br>130,000 颗恒星遵循赫罗图分布，每一颗都是实时生成的光。</p>
+    <div class="home-actions">
+      <button id="btn-enter" class="btn-primary" type="button">进 入 深 空</button>
+      <button id="btn-continue" class="btn-ghost" type="button" hidden>继续旅程 · <span id="continue-info"></span></button>
+    </div>
+    <div class="home-feats">
+      <div class="feat"><b>尺度穿越</b><small>行星轨道 → 本星系群</small></div>
+      <div class="feat"><b>引力透镜</b><small>按住星域，弯曲星光</small></div>
+      <div class="feat"><b>记忆晶体</b><small>银河记得你的停留</small></div>
+    </div>
   </div>
 </section>
 
-<aside id="journal" aria-hidden="true">
-  <h3>星际日志</h3>
-  <p class="journal-tip">在星域中停留，记忆将凝结为晶体。</p>
+<!-- 观测台 -->
+<section class="page" data-page="observatory" id="page-obs">
+  <header id="hud-top">
+    <div class="brand">TERRA<span>银河漫游</span></div>
+    <nav class="hud-actions">
+      <button id="btn-cruise" type="button">穿 越</button>
+    </nav>
+  </header>
+  <div id="hint">拖动旋转 · 滚轮缩放 · 点击恒星查看 · 长按星域引力弹射</div>
+  <div id="poi-labels"></div>
+  <div id="gravity-ring"><span>松开 · 引力弹射</span></div>
+
+  <div id="inspect-card" role="dialog" aria-live="polite">
+    <button id="inspect-close" type="button" aria-label="关闭">×</button>
+    <div id="inspect-kind">恒星</div>
+    <div id="inspect-name">—</div>
+    <div id="inspect-rows"></div>
+    <p id="inspect-desc"></p>
+    <button id="inspect-track" type="button">追 踪</button>
+  </div>
+
+  <section id="scale-panel" aria-live="polite">
+    <div id="scale-label">行星轨道 · —</div>
+    <div id="scale-bar"><div id="scale-cursor"></div></div>
+    <div id="scale-ticks">
+      <span>表面</span><span>恒星系</span><span>星团</span><span>旋臂</span><span>银河</span><span>深空</span>
+    </div>
+  </section>
+</section>
+
+<!-- 星图 -->
+<section class="page" data-page="atlas">
+  <h2>星 图</h2>
+  <p class="page-tip">银河俯视 · 点击任意星域，即刻跃迁</p>
+  <canvas id="atlas-canvas"></canvas>
+  <div id="atlas-legend">
+    <span><i class="lg lg-poi"></i>深空奇点</span>
+    <span><i class="lg lg-crystal"></i>记忆晶体</span>
+    <span><i class="lg lg-you"></i>当前位置</span>
+  </div>
+</section>
+
+<!-- 天体图鉴 -->
+<section class="page" data-page="codex">
+  <h2>天体图鉴</h2>
+  <div id="codex-progress">
+    <div id="codex-track"><div id="codex-bar"></div></div>
+    <span id="codex-count">0 / 13</span>
+  </div>
+  <h3 class="sec-title">恒星光谱</h3>
+  <div id="codex-spectral" class="codex-grid"></div>
+  <h3 class="sec-title">深空奇点</h3>
+  <div id="codex-pois" class="codex-grid"></div>
+</section>
+
+<!-- 星际日志 -->
+<section class="page" data-page="journal">
+  <h2>星际日志</h2>
+  <div id="stats-grid"></div>
+  <h3 class="sec-title">记忆晶体</h3>
+  <p class="page-tip">在星域中停留，记忆将凝结为晶体。点击晶体返航。</p>
   <div id="journal-list"></div>
-  <button id="journal-clear" type="button">遗忘所有记忆</button>
-</aside>
+</section>
+
+<!-- 设置 -->
+<section class="page" data-page="settings">
+  <h2>设 置</h2>
+  <div class="setting-row">
+    <div>空间声景<small>CMB 嗡鸣 · 恒星风 · 脉冲星</small></div>
+    <button class="switch" id="sw-audio" type="button" role="switch" aria-checked="false"><i></i></button>
+  </div>
+  <div class="setting-row">
+    <div>静谧模式<small>减弱动态效果 · 前庭敏感友好</small></div>
+    <button class="switch" id="sw-motion" type="button" role="switch" aria-checked="false"><i></i></button>
+  </div>
+  <div class="setting-row">
+    <div>引力透镜<small>光标产生质量效应，扭曲星光</small></div>
+    <button class="switch" id="sw-lens" type="button" role="switch" aria-checked="true"><i></i></button>
+  </div>
+  <div class="setting-row">
+    <div>高画质<small>关闭可提升低端设备帧率</small></div>
+    <button class="switch" id="sw-quality" type="button" role="switch" aria-checked="true"><i></i></button>
+  </div>
+  <div class="setting-row danger">
+    <div>遗忘所有记忆<small>清除记忆晶体、图鉴与旅程统计</small></div>
+    <button id="btn-wipe" type="button">清 除</button>
+  </div>
+  <p class="about">TERRA · 银河漫游 v0.2<br>全部内容实时生成，无预渲染素材。<br>恒星分布遵循赫罗图与初始质量函数。<br>深色常驻 · 光污染控制符合天文观测伦理。</p>
+</section>
+
+<nav id="tabbar" class="hidden">
+  <button data-route="observatory" type="button"><i>✦</i><span>观测</span></button>
+  <button data-route="atlas" type="button"><i>◎</i><span>星图</span></button>
+  <button data-route="codex" type="button"><i>❖</i><span>图鉴</span></button>
+  <button data-route="journal" type="button"><i>✧</i><span>日志</span></button>
+  <button data-route="settings" type="button"><i>⚙</i><span>设置</span></button>
+</nav>
 
 <div id="toast" role="status"></div>
 

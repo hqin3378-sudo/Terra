@@ -3,6 +3,12 @@ import { createGalaxy } from './galaxy.js';
 import { SpaceControls } from './controls.js';
 import { AudioEngine } from './audio.js';
 import { MemoryVault } from './memory.js';
+import { Router } from './router.js';
+import { Stats, formatDuration } from './stats.js';
+import { POIS, createPoiLayer } from './poi.js';
+import { Inspector } from './inspect.js';
+import { Atlas } from './atlas.js';
+import { renderCodex } from './codex.js';
 
 const canvas = document.getElementById('scene');
 const loader = document.getElementById('loader');
@@ -10,12 +16,30 @@ const $ = (id) => document.getElementById(id);
 const clamp = THREE.MathUtils.clamp;
 const lerp = THREE.MathUtils.lerp;
 
+/* ---------------- 设置持久化 ---------------- */
+
+const SETTINGS_KEY = 'terra-settings-v1';
+const settings = (() => {
+  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
+})();
+
 const state = {
-  reduced: matchMedia('(prefers-reduced-motion: reduce)').matches,
+  reduced: settings.reduced ?? matchMedia('(prefers-reduced-motion: reduce)').matches,
+  lensOn: settings.lens ?? true,
+  quality: settings.quality ?? 'high',
   cruising: false,
   lens: 0,
   lensTarget: 0,
+  route: 'home',
 };
+
+function saveSettings() {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+      reduced: state.reduced, lens: state.lensOn, quality: state.quality,
+    }));
+  } catch { /* ignore */ }
+}
 
 /* ---------------- 程序化纹理 ---------------- */
 
@@ -69,14 +93,13 @@ function boot(webgl2) {
     antialias: false,
     powerPreference: 'high-performance',
   });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setPixelRatio(state.quality === 'high' ? Math.min(devicePixelRatio, 2) : 1);
   renderer.setSize(innerWidth, innerHeight);
   renderer.setClearColor(0x020207, 1);
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.001, 8000);
 
-  // 银河本体
   const galaxy = createGalaxy();
   scene.add(galaxy.points);
   const U = galaxy.uniforms;
@@ -85,7 +108,6 @@ function boot(webgl2) {
   const SUN = galaxy.sunPos;
   const CENTER = new THREE.Vector3(0, 0, 0);
 
-  // 母恒星辉光与伴行星：穿越之旅的起点
   const glowTex = makeGlowTexture();
   const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({
     map: glowTex, color: 0xfff2d8, transparent: true, opacity: 0.95,
@@ -101,7 +123,6 @@ function boot(webgl2) {
   planetSprite.position.copy(SUN).add(new THREE.Vector3(0.012, 0.002, 0.008));
   scene.add(planetSprite);
 
-  // 河外星系：深空尺度的视觉锚点
   const spiralTex = makeSpiralTexture();
   [
     { p: [330, 90, -260], s: 90, r: [0.6, 0.3, 0.4] },
@@ -120,6 +141,8 @@ function boot(webgl2) {
     scene.add(m);
   });
 
+  const poiLayer = createPoiLayer(scene);
+
   // 尺度锚点：行星轨道 → 恒星系 → 星团 → 旋臂 → 银河全景 → 本星系群
   const ANCHORS = [
     { log: -1.7, pos: SUN },
@@ -134,8 +157,9 @@ function boot(webgl2) {
   const controls = new SpaceControls(camera, canvas, ANCHORS);
   const audio = new AudioEngine();
   const memory = new MemoryVault(scene, galaxy.sampleRegionColor);
+  const stats = new Stats();
 
-  /* ---------------- HUD ---------------- */
+  /* ---------------- HUD 基础 ---------------- */
 
   const toastEl = $('toast');
   let toastTimer = 0;
@@ -156,13 +180,122 @@ function boot(webgl2) {
     return `本星系群 · ${(ly / 1e6).toFixed(2)} 百万光年`;
   }
 
-  const journalEl = $('journal');
-  const journalList = $('journal-list');
-  function renderJournal() {
+  /* ---------------- 巡航 ---------------- */
+
+  const cruise = { t: 0, dur: 60, from: 0, to: 0, toastText: '' };
+  function startCruise(to, dur, toastText = '', lightBtn = false) {
+    state.cruising = true;
+    cruise.t = 0;
+    cruise.dur = dur;
+    cruise.from = controls.targetLogDist;
+    cruise.to = to;
+    cruise.toastText = toastText;
+    controls.mode = 'anchor';
+    if (lightBtn) $('btn-cruise').classList.add('active');
+  }
+  function stopCruise(silent = true) {
+    if (!state.cruising) return;
+    state.cruising = false;
+    $('btn-cruise').classList.remove('active');
+    if (!silent && cruise.toastText) toast(cruise.toastText);
+  }
+
+  /* ---------------- 拾取 / 星图 / 路由 ---------------- */
+
+  const inspector = new Inspector({
+    camera,
+    galaxy,
+    stats,
+    toast,
+    onTrack: (pos, log) => {
+      controls.focusOn(pos, log);
+      toast('已锁定目标 · 追踪中');
+    },
+  });
+
+  const atlas = new Atlas({
+    canvas: $('atlas-canvas'),
+    galaxy,
+    pois: POIS,
+    memory,
+    onJump: (pos) => {
+      controls.focusOn(pos, 1.1);
+      router.go('observatory');
+      toast('跃迁完成 · 已抵达目标星域');
+    },
+  });
+
+  const router = new Router(onRoute);
+
+  function onRoute(name) {
+    state.route = name;
+    const rendering = name === 'home' || name === 'observatory';
+    renderer.setAnimationLoop(rendering ? loop : null);
+
+    if (name === 'home') {
+      // 着陆页：巡航至银河全景作为活背景
+      controls.mode = 'anchor';
+      controls.targetLogDist = Math.max(controls.targetLogDist, 2.45);
+      const snap = stats.snapshot();
+      const crystals = memory.list().length;
+      if (crystals > 0 || snap.regions > 0) {
+        $('btn-continue').hidden = false;
+        $('continue-info').textContent = `${crystals} 枚晶体 · ${snap.regions} 处足迹`;
+      }
+    }
+    if (name === 'atlas') atlas.show(controls.targetPoint);
+    if (name === 'codex') {
+      renderCodex({
+        bar: $('codex-bar'), count: $('codex-count'),
+        spectral: $('codex-spectral'), pois: $('codex-pois'),
+      }, stats, POIS);
+    }
+    if (name === 'journal') renderJournalPage();
+    if (name !== 'observatory') {
+      inspector.close();
+      gravityRing.classList.remove('show');
+    }
+  }
+
+  document.querySelectorAll('#tabbar button').forEach((btn) => {
+    btn.addEventListener('click', () => router.go(btn.dataset.route));
+  });
+
+  $('btn-enter').addEventListener('click', () => {
+    router.go('observatory');
+    startCruise(-1.7, state.reduced ? 5 : 12, '抵达 · 母恒星轨道');
+  });
+  $('btn-continue').addEventListener('click', () => {
+    router.go('observatory');
+    startCruise(-1.7, state.reduced ? 5 : 12, '欢迎回来 · 旅者');
+  });
+
+  $('btn-cruise').addEventListener('click', () => {
+    if (state.cruising) {
+      stopCruise();
+      toast('穿越中止 · 由你掌舵');
+    } else {
+      startCruise(ANCHORS[5].log, 60, '抵达本星系群边缘 · 旅途愉快', true);
+      toast('尺度穿越开始 · 可随时接管');
+    }
+  });
+
+  /* ---------------- 日志页 ---------------- */
+
+  function renderJournalPage() {
+    const snap = stats.snapshot();
     const items = memory.list();
-    journalList.innerHTML = '';
+    $('stats-grid').innerHTML =
+      `<div class="stat-card"><b>${formatDuration(snap.totalTime)}</b><span>累计探索</span></div>` +
+      `<div class="stat-card"><b>${formatDuration(snap.sessionTime)}</b><span>本次会话</span></div>` +
+      `<div class="stat-card"><b>${snap.regions}</b><span>足迹星域</span></div>` +
+      `<div class="stat-card"><b>${items.length}</b><span>记忆晶体</span></div>` +
+      `<div class="stat-card"><b>${snap.spectral + snap.pois}/13</b><span>图鉴收集</span></div>`;
+
+    const list = $('journal-list');
+    list.innerHTML = '';
     if (items.length === 0) {
-      journalList.innerHTML = '<div id="journal-empty">尚无晶体凝结。<br>找一片星域，停下来，<br>让时间把你刻进银河。</div>';
+      list.innerHTML = '<div id="journal-empty">尚无晶体凝结。<br>找一片星域，停下来，<br>让时间把你刻进银河。</div>';
       return;
     }
     for (const it of items) {
@@ -176,85 +309,168 @@ function boot(webgl2) {
         `<span>记忆晶体 · ${it.key}<small>凝结于 ${date} · 点击返航</small></span>`;
       btn.addEventListener('click', () => {
         controls.focusOn(new THREE.Vector3(...it.pos), 1.0);
-        journalEl.classList.remove('open');
+        router.go('observatory');
         toast('已设定返航坐标');
       });
-      journalList.appendChild(btn);
+      list.appendChild(btn);
     }
   }
 
   memory.onCrystal = () => {
     toast('✦ 记忆晶体已凝结');
-    if (journalEl.classList.contains('open')) renderJournal();
+    if (state.route === 'journal') renderJournalPage();
   };
 
-  $('btn-log').addEventListener('click', () => {
-    const open = journalEl.classList.toggle('open');
-    $('btn-log').classList.toggle('active', open);
-    if (open) renderJournal();
-  });
-  $('journal-clear').addEventListener('click', () => {
-    memory.clear();
-    renderJournal();
-    toast('所有记忆已遗忘');
-  });
+  /* ---------------- 设置页 ---------------- */
 
-  $('btn-motion').addEventListener('click', () => {
-    state.reduced = !state.reduced;
-    document.body.classList.toggle('reduced', state.reduced);
-    $('btn-motion').classList.toggle('active', state.reduced);
-    U.uTwinkle.value = state.reduced ? 0 : 0.22;
-    toast(state.reduced ? '静谧模式 · 动态已减弱' : '动态已恢复');
-  });
-  if (state.reduced) {
-    document.body.classList.add('reduced');
-    $('btn-motion').classList.add('active');
-    U.uTwinkle.value = 0;
+  function syncSettingsUI() {
+    $('sw-audio').classList.toggle('on', audio.enabled);
+    $('sw-audio').setAttribute('aria-checked', String(audio.enabled));
+    $('sw-motion').classList.toggle('on', state.reduced);
+    $('sw-motion').setAttribute('aria-checked', String(state.reduced));
+    $('sw-lens').classList.toggle('on', state.lensOn);
+    $('sw-lens').setAttribute('aria-checked', String(state.lensOn));
+    $('sw-quality').classList.toggle('on', state.quality === 'high');
+    $('sw-quality').setAttribute('aria-checked', String(state.quality === 'high'));
   }
 
-  $('btn-audio').addEventListener('click', () => {
+  function applyReduced(on) {
+    state.reduced = on;
+    document.body.classList.toggle('reduced', on);
+    U.uTwinkle.value = on ? 0 : 0.22;
+    saveSettings();
+  }
+
+  $('sw-audio').addEventListener('click', () => {
     const on = audio.toggle();
-    $('btn-audio').classList.toggle('active', on);
+    syncSettingsUI();
     toast(on ? '空间声景已开启' : '声景已静默');
   });
-
-  // 尺度穿越：60 秒连续变焦，无加载中断
-  const cruise = { t: 0, dur: 60, from: 0, to: 0 };
-  $('btn-cruise').addEventListener('click', () => {
-    state.cruising = !state.cruising;
-    $('btn-cruise').classList.toggle('active', state.cruising);
-    if (state.cruising) {
-      cruise.t = 0;
-      cruise.from = controls.targetLogDist;
-      cruise.to = ANCHORS[5].log;
-      controls.mode = 'anchor';
-      toast('尺度穿越开始 · 可随时接管');
-    }
+  $('sw-motion').addEventListener('click', () => {
+    applyReduced(!state.reduced);
+    syncSettingsUI();
+    toast(state.reduced ? '静谧模式 · 动态已减弱' : '动态已恢复');
+  });
+  $('sw-lens').addEventListener('click', () => {
+    state.lensOn = !state.lensOn;
+    if (!state.lensOn) state.lensTarget = 0;
+    saveSettings();
+    syncSettingsUI();
+    toast(state.lensOn ? '引力透镜已启用' : '引力透镜已关闭');
+  });
+  $('sw-quality').addEventListener('click', () => {
+    state.quality = state.quality === 'high' ? 'low' : 'high';
+    renderer.setPixelRatio(state.quality === 'high' ? Math.min(devicePixelRatio, 2) : 1);
+    U.uSizeScale.value = renderer.getPixelRatio() * (matchMedia('(pointer: coarse)').matches ? 0.85 : 1);
+    onResize();
+    saveSettings();
+    syncSettingsUI();
+    toast(state.quality === 'high' ? '高画质已开启' : '节能画质 · 帧率优先');
+  });
+  $('btn-wipe').addEventListener('click', () => {
+    memory.clear();
+    stats.reset();
+    for (const k of Object.keys(state)) if (k.startsWith('_poiHint_')) delete state[k];
+    toast('所有记忆已遗忘 · 银河重归陌生');
   });
 
-  /* ---------------- 引力透镜交互 ---------------- */
+  /* ---------------- POI 屏幕标签 ---------------- */
+
+  const labelWrap = $('poi-labels');
+  const poiLabels = poiLayer.entries.map(({ poi, posV }) => {
+    const el = document.createElement('button');
+    el.className = 'poi-label';
+    el.type = 'button';
+    el.textContent = poi.name;
+    el.style.color = `rgb(${poi.color.map((v) => Math.round(v * 255)).join(',')})`;
+    el.addEventListener('click', () => inspector.showPoi(poi));
+    labelWrap.appendChild(el);
+    return { poi, posV, el, x: 0, y: 0, visible: false };
+  });
+
+  const _pv = new THREE.Vector3();
+  function updatePoiLabels() {
+    for (const L of poiLabels) {
+      _pv.copy(L.posV).project(camera);
+      const camDist = camera.position.distanceTo(L.posV);
+      L.visible = _pv.z < 1 && camDist < 420;
+      if (L.visible) {
+        L.x = (_pv.x * 0.5 + 0.5) * innerWidth;
+        L.y = (-_pv.y * 0.5 + 0.5) * innerHeight;
+        L.el.style.left = `${L.x}px`;
+        L.el.style.top = `${L.y}px`;
+        L.el.style.opacity = clamp(1.8 - camDist / 160, 0.15, 1);
+        L.el.style.display = '';
+      } else {
+        L.el.style.display = 'none';
+      }
+    }
+  }
+
+  /* ---------------- 引力透镜 + 弹射 ---------------- */
+
+  const gravityRing = $('gravity-ring');
+  let press = null;
 
   function updateMouse(e) {
     U.uMouse.value.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   }
+
+  function screenToDisc(x, y) {
+    const v = new THREE.Vector3((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1, 0.5).unproject(camera);
+    const dir = v.sub(camera.position).normalize();
+    const t = -camera.position.y / dir.y;
+    if (!isFinite(t) || t <= 0) return null;
+    const p = camera.position.clone().add(dir.multiplyScalar(t));
+    const r = Math.hypot(p.x, p.z);
+    if (r > 46) { p.x *= 46 / r; p.z *= 46 / r; }
+    p.y = 0;
+    return p;
+  }
+
   addEventListener('pointermove', (e) => {
     updateMouse(e);
     if (e.pointerType === 'mouse' && e.buttons === 0) {
-      state.lensTarget = state.reduced ? 0 : 0.16;
+      state.lensTarget = state.lensOn && !state.reduced ? 0.16 : 0;
     }
   }, { passive: true });
+
   addEventListener('pointerdown', (e) => {
+    if (state.route !== 'observatory') return;
     updateMouse(e);
-    state.lensTarget = state.reduced ? 0.4 : 0.95;
-    if (state.cruising) { // 旅者接管，穿越中止
-      state.cruising = false;
-      $('btn-cruise').classList.remove('active');
+    press = { t: performance.now(), x: e.clientX, y: e.clientY };
+    if (state.lensOn) {
+      state.lensTarget = state.reduced ? 0.4 : 0.95;
+      gravityRing.style.left = `${e.clientX}px`;
+      gravityRing.style.top = `${e.clientY}px`;
+      gravityRing.classList.add('show');
     }
+    stopCruise();
   }, { passive: true });
+
   addEventListener('pointerup', (e) => {
-    state.lensTarget = e.pointerType === 'mouse' && !state.reduced ? 0.16 : 0;
+    state.lensTarget = state.lensOn && e.pointerType === 'mouse' && !state.reduced ? 0.16 : 0;
+    gravityRing.classList.remove('show');
+    if (!press || state.route !== 'observatory') { press = null; return; }
+    const dt = performance.now() - press.t;
+    const moved = Math.hypot(e.clientX - press.x, e.clientY - press.y);
+    if (dt < 350 && moved < 10) {
+      inspector.handleTap(e.clientX, e.clientY, poiLabels);
+    } else if (dt >= 450 && moved < 12) {
+      const p = screenToDisc(e.clientX, e.clientY);
+      if (p) {
+        controls.focusOn(p, 0.85);
+        toast('引力弹射 · 跃迁中');
+      }
+    }
+    press = null;
   }, { passive: true });
-  document.addEventListener('pointerleave', () => { state.lensTarget = 0; }, { passive: true });
+
+  document.addEventListener('pointerleave', () => {
+    state.lensTarget = 0;
+    gravityRing.classList.remove('show');
+    press = null;
+  }, { passive: true });
 
   /* ---------------- 尺寸与循环 ---------------- */
 
@@ -267,12 +483,17 @@ function boot(webgl2) {
   addEventListener('resize', onResize);
   onResize();
 
+  applyReduced(state.reduced);
+  syncSettingsUI();
+
   const clock = new THREE.Clock();
   const scaleLabel = $('scale-label');
   const scaleCursor = $('scale-cursor');
   let hudTimer = 0;
+  let poiTimer = 0;
+  let regionTimer = 0;
 
-  renderer.setAnimationLoop(() => {
+  function loop() {
     const dt = Math.min(clock.getDelta(), 0.1);
     const t = clock.elapsedTime;
 
@@ -282,11 +503,7 @@ function boot(webgl2) {
       const ease = p < 0.5 ? 2 * p * p : 1 - ((-2 * p + 2) ** 2) / 2;
       controls.targetLogDist = lerp(cruise.from, cruise.to, ease);
       if (!state.reduced) controls.targetTheta += dt * 0.04;
-      if (p >= 1) {
-        state.cruising = false;
-        $('btn-cruise').classList.remove('active');
-        toast('抵达本星系群边缘 · 旅途愉快');
-      }
+      if (p >= 1) stopCruise(false);
     }
 
     controls.update(dt, state.reduced);
@@ -298,15 +515,44 @@ function boot(webgl2) {
     U.uTime.value = state.reduced ? 0 : t;
     U.uExposure.value = 0.75 + norm * 1.1;
 
-    // 母恒星与行星的视觉尺寸随尺度衰减
     const sunScale = clamp(dist * 0.25, 0.004, 1.2);
     sunSprite.scale.setScalar(sunScale * 4);
     sunSprite.material.opacity = clamp(1.2 - norm * 1.1, 0, 0.95);
     planetSprite.scale.setScalar(clamp(dist * 0.06, 0.0008, 0.2));
     planetSprite.material.opacity = clamp(1 - norm * 2.5, 0, 0.9);
 
+    poiLayer.update(t, state.reduced);
+    if (state.route === 'observatory') updatePoiLabels();
+
     memory.update(dt, controls.targetPoint, dist, t);
     audio.setScale(norm);
+    stats.tick(dt);
+
+    // 奇点接近混音：沃尔夫-拉叶星风 / 脉冲星节律随距离浮现
+    poiTimer += dt;
+    if (poiTimer > 0.5) {
+      poiTimer = 0;
+      let best = null;
+      let bd = 18;
+      for (const { poi, posV } of poiLayer.entries) {
+        if (!poi.audio) continue;
+        const d = controls.targetPoint.distanceTo(posV);
+        if (d < bd) { bd = d; best = poi; }
+      }
+      audio.setPoiBoost(best ? best.audio : null, best ? 1 - bd / 18 : 0);
+      if (best && dist < 15 && !state[`_poiHint_${best.id}`]) {
+        state[`_poiHint_${best.id}`] = true;
+        toast(`接近 ${best.name} · ${best.kind}`);
+      }
+    }
+
+    // 足迹星域统计
+    regionTimer += dt;
+    if (regionTimer > 2 && dist < 120) {
+      regionTimer = 0;
+      const p = controls.targetPoint;
+      stats.recordRegion(`${Math.round(p.x / 10)},${Math.round(p.z / 10)}`);
+    }
 
     hudTimer += dt;
     if (hudTimer > 0.12) {
@@ -316,9 +562,10 @@ function boot(webgl2) {
     }
 
     renderer.render(scene, camera);
-  });
+  }
 
-  console.info(`[TERRA] renderer: ${webgl2 ? 'WebGL2' : 'WebGL1'}, stars: ${galaxy.points.geometry.attributes.position.count}`);
+  console.info(`[TERRA] renderer: ${webgl2 ? 'WebGL2' : 'WebGL1'}, stars: ${galaxy.points.geometry.attributes.position.count}, bright: ${galaxy.brightStars.length}`);
+  router.start();
   loader.classList.add('done');
   setTimeout(() => loader.remove(), 1000);
 }
@@ -374,9 +621,8 @@ function startFallback2D() {
     requestAnimationFrame(draw);
   })();
 
-  $('scale-label').textContent = '兼容模式 · 2D 星野（当前环境不支持 WebGL）';
-  for (const id of ['btn-cruise', 'btn-audio', 'btn-log']) $(id).style.display = 'none';
-  $('hint').textContent = '你的浏览器未启用 WebGL，已切换为静态星野';
+  document.body.classList.add('fallback');
+  $('btn-enter').textContent = '需要 WebGL · 已切换静态星野';
   loader.classList.add('done');
   setTimeout(() => loader.remove(), 1000);
 }

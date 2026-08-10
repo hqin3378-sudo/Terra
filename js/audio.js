@@ -8,6 +8,8 @@ export class AudioEngine {
     this.ctx = null;
     this.enabled = false;
     this._scale = 0.3;
+    this._boostKind = null;
+    this._boostAmt = 0;
   }
 
   _build() {
@@ -79,13 +81,29 @@ export class AudioEngine {
   // t: 0 = 行星表面, 1 = 深空
   setScale(t) {
     this._scale = t;
+    this._apply();
+  }
+
+  // 接近音频特征奇点时的增益叠加（沃尔夫-拉叶星星风 / 脉冲星）
+  setPoiBoost(kind, amount) {
+    this._boostKind = kind;
+    this._boostAmt = amount;
+    this._apply();
+  }
+
+  _apply() {
     if (!this.ctx || !this.enabled) return;
+    const t = this._scale;
     const now = this.ctx.currentTime;
-    this.droneGain.gain.setTargetAtTime(lerp(0.04, 0.30, t), now, 0.5);
-    this.windGain.gain.setTargetAtTime(lerp(0.20, 0.015, t), now, 0.5);
-    this.windFilter.frequency.setTargetAtTime(lerp(2600, 140, t), now, 0.5);
+    let wind = lerp(0.20, 0.015, t);
     const bell = Math.exp(-((t - 0.55) ** 2) / (2 * 0.18 ** 2));
-    this.pulsarGain.gain.setTargetAtTime(bell * 0.22, now, 0.5);
+    let pulsar = bell * 0.22;
+    if (this._boostKind === 'wind') wind += this._boostAmt * 0.3;
+    if (this._boostKind === 'pulsar') pulsar += this._boostAmt * 0.4;
+    this.droneGain.gain.setTargetAtTime(lerp(0.04, 0.30, t), now, 0.5);
+    this.windGain.gain.setTargetAtTime(wind, now, 0.5);
+    this.windFilter.frequency.setTargetAtTime(lerp(2600, 140, t), now, 0.5);
+    this.pulsarGain.gain.setTargetAtTime(pulsar, now, 0.5);
   }
 
   toggle() {
@@ -95,7 +113,7 @@ export class AudioEngine {
     const now = this.ctx.currentTime;
     this.master.gain.cancelScheduledValues(now);
     this.master.gain.setTargetAtTime(this.enabled ? 0.9 : 0, now, 0.6);
-    if (this.enabled) this.setScale(this._scale);
+    if (this.enabled) this._apply();
     return this.enabled;
   }
 }
